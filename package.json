@@ -1,7 +1,7 @@
 {
   "name": "mkr-auction-monitor",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "flip.js",
   "license": "MIT",
   "dependencies": {
     "ethers": "^4.0.46"

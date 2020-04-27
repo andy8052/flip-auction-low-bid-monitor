@@ -1,9 +1,7 @@
 const ethers = require('ethers');
+const https = require('https');
 
 const provider = ethers.getDefaultProvider();
-
-const ETH_FLIP_ADDRESS = "0xd8a04f5412223f513dc55f839574430f5ec15531";
-const OSM_ADDRESS = "0x81FE72B5A8d1A857d176C3E7d5Bd2679A9B85763";
 
 var tau = 21600; // 6 hours
 var ttl = 21600; // 6 hours
@@ -18,9 +16,31 @@ const FILE = "0x29ae811400000000000000000000000000000000000000000000000000000000
 const _TAU = "0x7461750000000000000000000000000000000000000000000000000000000000";
 const _TTL = "0x74746c0000000000000000000000000000000000000000000000000000000000";
 
-const osmContract = new ethers.Contract(OSM_ADDRESS, osmABI, provider);
+const osmContract = new ethers.Contract(process.env.OSM_ADDRESS, osmABI, provider);
 
 var auctions = [];
+
+function notifyPagerDuty(message) {
+
+    console.log(JSON.stringify(message))
+
+    var POST_OPTIONS = {
+        hostname: process.env.PAGER_DUTY_HOSTNAME,
+        path: process.env.PAGER_DUTY_URL,
+        method: 'POST',
+    };
+
+    const req = https.request(POST_OPTIONS, (res) => {
+        res.setEncoding('utf8')
+    });
+
+    req.on('error', (e) => {
+        console.error(e.message)
+    });
+
+    req.write(util.format("%j", message));
+    req.end()
+}
 
 function getType(topic) {
     if (topic === TEND) {
@@ -77,7 +97,7 @@ function registerFile(log) {
 
 function subscribe() {
     const filterAll = {
-        address: ETH_FLIP_ADDRESS
+        address: process.env.FLIP_ADDRESS
     }
 
     provider.on(filterAll, async (log) => {
@@ -95,16 +115,53 @@ function subscribe() {
 }
 
 function checkAuctions(timestamp) {
+    let alerts = []
     for (auction in auctions) {
         if (auction && auctions[auction]["end"] < timestamp) {
-            console.log("low auction closed")
-            console.log(auctions[auction])
+            message =
+            {
+                "payload": {
+                    "summary": process.env.LOW_AUCTION_SUMMARY,
+                    "timestamp": new Date().toISOString(),
+                    "source": process.env.LOW_AUCTION_SOURCE,
+                    "severity": "critical",
+                    "component": process.env.LOW_AUCTION_COMPONENT,
+                    "group": process.env.LOW_AUCTION_GROUP,
+                    "custom_details":
+                        {
+                            "auction ID": auctions[auction]["id"],
+                            "end time": auctions[auction]["end"]
+                        }
+                    },
+                    "routing_key": process.env.PAGER_DUTY_LOW_AUCTION_KEY,
+                    "event_action": "resolve",
+                    "dedup_key": auctions[auction]["id"]
+            }
             delete auctions[auction]
         } else if (auction && auctions[auction]["end"] - cushionTime < timestamp) {
-            console.log("10 minutes left in low auction")
-            console.log(auctions[auction])
+            message =
+            {
+                "payload": {
+                    "summary": process.env.LOW_AUCTION_SUMMARY,
+                    "timestamp": new Date().toISOString(),
+                    "source": process.env.LOW_AUCTION_SOURCE,
+                    "severity": "critical",
+                    "component": process.env.LOW_AUCTION_COMPONENT,
+                    "group": process.env.LOW_AUCTION_GROUP,
+                    "custom_details":
+                        {
+                            "auction ID": auctions[auction]["id"],
+                            "end time": auctions[auction]["end"]
+                        }
+                    },
+                    "routing_key": process.env.PAGER_DUTY_LOW_AUCTION_KEY,
+                    "event_action": "trigger",
+                    "dedup_key": auctions[auction]["id"]
+            }
+            alerts.push(message)
         }
     }
+    notifyPagerDuty(message)
 }
 
 function checkBlocks() {
